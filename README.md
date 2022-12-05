@@ -1,4 +1,4 @@
-# CS 520 THE CIRCLE OF LIFE
+# CS 520 better-smarter-faster
 
 ## Setup Guide for Anaconda
 
