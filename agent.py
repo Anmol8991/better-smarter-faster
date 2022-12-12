@@ -40,6 +40,7 @@ class Agent:
         # For partial predator
         self.pred_transition_matrix = np.zeros((total_nodes, total_nodes), dtype=float)
 
+        
         print("Initial Agent Position: " + str(self.node))
 
     def prey_move_sim(self, graph: Graph, prey_pos, agent_future_pos) -> int:
@@ -148,6 +149,114 @@ class Agent:
                     self.pred_transition_matrix[inode, jnode] = 0.6 / len(likely_nodes_plan) + 0.4 / len(likely_nodes_random)
                 else: # when predator is distracted and goes to a 'bad' node
                     self.pred_transition_matrix[inode, jnode] = 0.4 / len(likely_nodes_random)
+
+    # Agent U_PARTIAL 
+    def get_policy(self, graph, pred_pos, probability_vector, transition_model, optimal_state_utility,immediate_reward, partial_utility):
+
+        
+        utility = {}
+
+
+        actions = graph.neighbors(self.node)
+        cur_state = (self.node, pred_pos)
+
+        # Shortest Distance from Agent to Predator
+        agent_to_predator = graph.shortest_path_length(self.node , pred_pos)
+
+        if agent_to_predator == 1:
+            agent_neighbours = graph.neighbors(self.node)
+            dis_to_pred = {}
+            for i in agent_neighbours:
+                dis_to_pred[i] = graph.shortest_path_length(i , pred_pos)
+
+            max_val = max(dis_to_pred.values())
+            best_neighbors = [neighbor for neighbor, dist in dis_to_pred.items() if dist == max_val]  
+                
+            return random.choice(best_neighbors) 
+        
+
+        for a in actions:
+            utility[a] = 0
+
+            for (p, s1) in transition_model[cur_state][a]:
+
+                # Update post agent moves
+                # probability_vector = prob.survey(probability_vector, agent.node, s1[1])
+
+                # Update post prey moves
+                updated_prey_prob_vector = np.matmul(self.prey_transition_matrix, np.array(probability_vector))
+                updated_prey_prob_vector = updated_prey_prob_vector.tolist()
+
+                
+                expected_utility = 0
+                for i in range(len(updated_prey_prob_vector)):
+                    expected_utility += updated_prey_prob_vector[i]*optimal_state_utility[(a,i,s1[1])] # a - agent position, i - prey position, s1[1] - predator position
+                
+                utility[a] += p * expected_utility
+
+
+        # UPDATE utility
+        state = (self.node, tuple(probability_vector), pred_pos)
+
+        partial_utility[state] = immediate_reward[cur_state] +  min(utility.values())
+
+
+        lowest_utility_neighbors = [action for action, u in utility.items() if u == min(utility.values())]      
+
+        # Breaking ties at random
+        next_pos = random.choice(lowest_utility_neighbors)
+
+        return next_pos
+
+
+
+
+    # Agent V_MODEL
+    def get_policy_model( graph, state, transition_model, predict):
+
+        
+        expected_utility = {}
+
+
+        actions = graph.neighbors(state[0])
+
+        # Shortest Distance from Agent to Predator
+        agent_to_predator = graph.shortest_path_length(state[0], state[2])
+
+        if agent_to_predator == 1:
+            agent_neighbours = graph.neighbors(state[0])
+            dis_to_pred = {}
+            for i in agent_neighbours:
+                dis_to_pred[i] = graph.shortest_path_length(i , state[2])
+
+            max_val = max(dis_to_pred.values())
+            best_neighbors = [neighbor for neighbor, dist in dis_to_pred.items() if dist == max_val]  
+                
+            return random.choice(best_neighbors) 
+
+        for a in actions:
+            expected_utility[a] = 0
+            for (p, s1) in transition_model[state][a]:
+                expected_utility[a] += p * predict([[[graph.shortest_path_length(s1[0], s1[1])/50, graph.shortest_path_length(s1[0], s1[2])/50]]])[0][0][0] * max_util
+    
+
+        # Set Minimum reward value out of all the actions as the utility of the current state
+        min_val = min(expected_utility.values())
+
+        # # UPDATE utility
+        # state_utility[state] = immediate_reward[state] +   min_val
+
+
+        lowest_utility_neighbors = [action for action, utility in expected_utility.items() if utility == min_val]      
+
+        # Breaking ties at random
+        next_pos = random.choice(lowest_utility_neighbors)
+
+        return next_pos
+
+
+
+        
 
     def move_1(self, graph: Graph, prey_pos, pred_pos) -> None:
         """
@@ -407,177 +516,83 @@ class Agent:
         state = (self.node,prey_pos,pred_pos)
         self.node = state_policy[state] 
 
-        
-# def assign_utility(self, graph: Graph, prey_pos, pred_pos):
-#         """
-#         This function estimates the initial utility of the state 
-#         Good guess for estimating the utility of a state is the distance between the agent and the prey
-#         """
-    
-#         state_utility = {}
 
-#         agent_to_prey = graph.shortest_path_length(self.node , prey_pos)
+    def move_partial(self, graph: Graph, prey_pos: int, pred_pos: int, time_steps: int, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility) -> bool:
+        """
+        Movement logic for Agent U_partial
+        """
+        error = 10 ** -5
 
-#         # Shortest Distance from Agent to Predator
-#         agent_to_predator = graph.shortest_path_length(self.node , pred_pos)
+        if time_steps == 1:
+            # Initial transition matrix (not to be altered)
+            self.update_prey_trans_matrix(graph)
 
-#         # List of Neighbors of Agent (i.e the actions that the agent can take)
-#         agent_neighbours = graph.neighbors(self.node)
+        elif time_steps > 1:
+            # Update beliefs post prey move
+            """
+            P ( prey at some_node now ) = SUM [ P ( prey at some_node now AND prey was at old_node then ) ]
+                ... Marginalization
 
-#         # Distance of shortest path from each neighbour to prey and predator
-#         dist_neighbors = {}
-        
-#         # Setting immediate_reward for every neighbor according to the order followed by Agent1 
-#         immediate_reward = {}
+            P ( prey at some_node now ) = SUM [ P ( prey at old_node then ) * P ( prey at some_node now | prey at old_node then ) ]
+                ... Conditional Factoring
 
-#         for neighbor in agent_neighbours:
-
-#             # Distance of shortest path from neighbor to prey
-#             neighbor_to_prey = graph.shortest_path_length( neighbor, prey_pos)
-
-#             # Distance of shortest path from neighbor to predator
-#             neighbor_to_predator = graph.shortest_path_length( neighbor, pred_pos)
-
-#             dist_neighbors[neighbor] = (neighbor_to_prey,neighbor_to_predator)
-
-#             if neighbor_to_prey < agent_to_prey and neighbor_to_predator > agent_to_predator:
-#                 immediate_reward[neighbor] = 1
-                
-#             elif neighbor_to_prey < agent_to_prey and neighbor_to_predator == agent_to_predator :
-#                 immediate_reward[neighbor] = 2
-                
-#             elif neighbor_to_prey == agent_to_prey and neighbor_to_predator > agent_to_predator :
-#                 immediate_reward[neighbor] = 3
-                
-#             elif neighbor_to_prey == agent_to_prey and neighbor_to_predator == agent_to_predator :
-#                 immediate_reward[neighbor] = 4
-                
-#             elif neighbor_to_predator > agent_to_predator :
-#                 immediate_reward[neighbor] = 5
-                
-#             elif neighbor_to_predator == agent_to_predator :
-#                 immediate_reward[neighbor] = 6
-                
-#             else :
-#                 immediate_reward[neighbor] = 7
-        
-#         # Minimum immediate_reward value out of all the neighbors
-#         min_val = min(immediate_reward.values())
-
-#         state_utility[(self.node,prey_pos,pred_pos)] = min_val
-
-
-
-
-# def optimal_utility(self, graph: Graph, prey_pos, pred_pos,time_steps,state_utility) -> None:
-#         """
-#         This function moves the agent util;ity according to the strategy mentioned in the write up
-#         """
-
-#         error = 10 ** -5
-
-#         if time_steps == 1:
-#             self.pred_beliefs[pred_pos] = 1.0
-#             if not prob.check_sum_beliefs(self.pred_beliefs):
-#                 raise ValueError("Sum of pred beliefs error (initial)")
-
-#             # Initial transition matrix for prey (not to be altered)
-#             self.update_prey_trans_matrix(graph)
-
-#         elif time_steps > 1:
-#             # Update beliefs post predator move
-#             self.update_dist_pred_trans_matrix(graph)
-
-        
-#         # Shortest Distance from Agent to prey
-#         agent_to_prey = graph.shortest_path_length(self.node , prey_pos)
-        
-#         # Shortest Distance from Agent to Predator
-#         agent_to_predator = graph.shortest_path_length(self.node , pred_pos)
-
-#         # List of Neighbors of Agent (i.e the actions that the agent can take)
-#         agent_neighbours = graph.neighbors(self.node)
-
-#         # List of Neighbors of Prey (i.e help us determine neighbouring states of the system)
-#         prey_neighbours = graph.neighbors(prey_pos)
-
-#         # List of Neighbors of Predator (i.e help us determine neighbouring states of the system)
-#         predator_neighbours = graph.neighbors(pred_pos)
-
-#         # Distance of shortest path from each neighbour to prey and predator
-#         dist_neighbors = {}
-        
-#         # Setting immediate_reward for every neighbor according to the order followed by Agent1 
-#         reward = {}
-
-#         for neighbor in agent_neighbours:
-
-#             # Distance of shortest path from neighbor to prey
-#             neighbor_to_prey = graph.shortest_path_length( neighbor, prey_pos)
-
-#             # Distance of shortest path from neighbor to predator
-#             neighbor_to_predator = graph.shortest_path_length( neighbor, pred_pos)
-
-#             dist_neighbors[neighbor] = (neighbor_to_prey,neighbor_to_predator)
-
-#             # First check for terminal states 
-#             if neighbor == prey_pos or neighbor == pred_pos:
-#                 reward[neighbor] = 0
-
-#             # else:
-#             #     reward[neighbor] = 1
-
-#             elif neighbor_to_prey < agent_to_prey and neighbor_to_predator > agent_to_predator:
-#                 reward[neighbor] = 1
-                
-#             elif neighbor_to_prey < agent_to_prey and neighbor_to_predator == agent_to_predator :
-#                 reward[neighbor] = 2
-                
-#             elif neighbor_to_prey == agent_to_prey and neighbor_to_predator > agent_to_predator :
-#                 reward[neighbor] = 3
-                
-#             elif neighbor_to_prey == agent_to_prey and neighbor_to_predator == agent_to_predator :
-#                 reward[neighbor] = 4
-                
-#             elif neighbor_to_predator > agent_to_predator :
-#                 reward[neighbor] = 5
-                
-#             elif neighbor_to_predator == agent_to_predator :
-#                 reward[neighbor] = 6
-                
-#             else :
-#                 reward[neighbor] = 7
+            P ( prey at some_node now ) = SUM [ P ( prey at old_node then ) * P ( some_node | old_node ) ]
+                ... Simplifying the last probability which is basically the transition probability
             
-#             # Now after assigning the immediate reward for the action we have to now 
-#             # Evaluate Expected utility of future
+            New beilief = DOT PRODUCT [ old_belief , row in the transition matrix ]
+                ... In terms of what we have
+            """
 
-#             expected_future_utility = 0
-#             beta = 1
-            
-#             for prey_n in prey_neighbours:
-#                 prey_transition_prob = self.prey_transition_matrix[prey_n,prey_pos]
-#                 for predator_n in predator_neighbours:
-#                     predator_transition_prob = self.pred_transition_matrix[predator_n,pred_pos]
-#                     new_state = (neighbor,prey_n,predator_n)
-#                     transition_prob_to_new_state = prey_transition_prob*predator_transition_prob
-#                     expected_future_utility += transition_prob_to_new_state*state_utility[new_state]
-            
-#             reward[neighbor] += beta*expected_future_utility
+            updated_beliefs_ndarray = np.matmul(self.prey_transition_matrix, np.array(self.prey_beliefs))
+            self.prey_beliefs = updated_beliefs_ndarray.tolist()
+
+            if not prob.check_sum_beliefs(self.prey_beliefs):
+                raise ValueError("Sum of beliefs error (after prey move update)")
+
+        # Find the best survey pos
+        best_survey_node = prob.node_to_survey(self.prey_beliefs, "prey")
+
+        # Perform survey on the best node
+        self.prey_beliefs = prob.survey(self.prey_beliefs, best_survey_node, prey_pos)
+
+        if not prob.check_sum_beliefs(self.prey_beliefs):
+            raise ValueError("Sum of beliefs error (after node survey)")
+
+        probability_vector = self.prey_beliefs.copy()
+        next_pos = self.get_policy(graph, pred_pos, probability_vector, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility)
+
+        # state_policy[s] = next_pos
+        self.node = next_pos
         
-#         # Set Minimum reward value out of all the actions as the utility of the current state
-#         min_val = min(reward.values())
 
-#         lowest_reward_neighbors = [key for key, value in reward.items() if value == min_val]      
+        # # Find the node for which we have highest belief
+        # max_prob_nodes = [node for node, belief in enumerate(self.prey_beliefs) if belief == max(self.prey_beliefs)]
 
-#         # Breaking ties at random
-#         next_pos = random.choice(lowest_reward_neighbors)
-  
+        # # If more than one, break ties randomly if 
+        # prob_prey_pos = random.choice(max_prob_nodes)
+        # print("Highest probable current position of prey is [{}] with probability [{}], so we'll use that info".format(prob_prey_pos, self.prey_beliefs[prob_prey_pos]))
 
-#         while min_val != state_utility[(self.node,prey_pos,pred_pos)]:
-#             state_utility[(self.node,prey_pos,pred_pos)] = min_val
-#             # Update node for the agent
-#             self.node = next_pos
+        
 
+        # Update beliefs post agent move
+        prob.survey(self.prey_beliefs, self.node, prey_pos)
+
+        if not prob.check_sum_beliefs(self.prey_beliefs):
+            raise ValueError("Sum of beliefs error (after agent move)")
+        
+        if 1.0 - error <= max(self.prey_beliefs) <= 1.0 + error:
+            return True
+        else:
+            return False
+        
+        
+    def move_model(self, graph: Graph, prey_pos: int, pred_pos: int,  transition_model, predict) -> bool:
+        """
+        Movement logic for Agent V_MODEL
+        """
+
+        state = (self.node,prey_pos,pred_pos) 
+        self.node = self.get_policy_model( graph, state, transition_model, predict)  
             
 
 
