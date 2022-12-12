@@ -486,7 +486,7 @@ class Agent:
         # If more than one, break ties randomly if 
         prob_prey_pos = random.choice(max_prob_nodes)
 
-        print("Highest probable current position of prey is [{}] with probability [{}], so we'll use that info".format(prob_prey_pos, self.prey_beliefs[prob_prey_pos]))
+        # print("Highest probable current position of prey is [{}] with probability [{}], so we'll use that info".format(prob_prey_pos, self.prey_beliefs[prob_prey_pos]))
 
         if self.name == "agent3":
             # Do the actual movement to highest belief node based on agent 1 logic for agent 3
