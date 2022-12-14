@@ -151,7 +151,7 @@ class Agent:
                     self.pred_transition_matrix[inode, jnode] = 0.4 / len(likely_nodes_random)
 
     # Agent U_PARTIAL 
-    def get_policy(self, graph, pred_pos, probability_vector, transition_model, optimal_state_utility,immediate_reward, partial_utility):
+    def get_policy(self, graph: Graph, pred_pos, probability_vector, transition_model, optimal_state_utility,immediate_reward, partial_utility, net=None, mean_x=None, stdev_x=None):
 
         
         utility = {}
@@ -190,7 +190,10 @@ class Agent:
                 
                 expected_utility = 0
                 for i in range(len(updated_prey_prob_vector)):
-                    expected_utility += updated_prey_prob_vector[i]*optimal_state_utility[(a,i,s1[1])] # a - agent position, i - prey position, s1[1] - predator position
+                    if self.name == "agent12":
+                        expected_utility += updated_prey_prob_vector[i]*optimal_state_utility[(a,i,s1[1])] # a - agent position, i - prey position, s1[1] - predator position
+                    elif self.name == "agent15":
+                        expected_utility += updated_prey_prob_vector[i] * net.predict([[[(graph.shortest_path_length(a, i) - mean_x) / stdev_x, (graph.shortest_path_length(a, s1[1]) - mean_x) / stdev_x]]])[0][0][0]
                 
                 utility[a] += p * expected_utility
 
@@ -212,7 +215,7 @@ class Agent:
 
 
     # Agent V_MODEL
-    def get_policy_model( graph, state, transition_model, predict):
+    def get_policy_model(self, graph, state, transition_model, net, mean_x, stdev_x):
 
         
         expected_utility = {}
@@ -237,7 +240,7 @@ class Agent:
         for a in actions:
             expected_utility[a] = 0
             for (p, s1) in transition_model[state][a]:
-                expected_utility[a] += p * predict([[[graph.shortest_path_length(s1[0], s1[1])/50, graph.shortest_path_length(s1[0], s1[2])/50]]])[0][0][0] * max_util
+                expected_utility[a] += p * net.predict([[[(graph.shortest_path_length(s1[0], s1[1]) - mean_x) / stdev_x, (graph.shortest_path_length(s1[0], s1[2]) - mean_x) / stdev_x]]])[0][0][0]
     
 
         # Set Minimum reward value out of all the actions as the utility of the current state
@@ -254,6 +257,61 @@ class Agent:
 
         return next_pos
 
+    # Agent V partial
+    def get_policy_partial(self, graph, state, transition_model_partial, probability_vector, net, mean_x, stdev_x):
+
+        
+        expected_utility = {}
+        actions = graph.neighbors(state[0])
+
+        # Shortest Distance from Agent to Predator
+        agent_to_predator = graph.shortest_path_length(state[0], state[1])
+
+        if agent_to_predator == 1:
+            agent_neighbours = graph.neighbors(state[0])
+            dis_to_pred = {}
+            for i in agent_neighbours:
+                dis_to_pred[i] = graph.shortest_path_length(i , state[1])
+
+            max_val = max(dis_to_pred.values())
+            best_neighbors = [neighbor for neighbor, dist in dis_to_pred.items() if dist == max_val]  
+                
+            return random.choice(best_neighbors) 
+
+        for a in actions:
+
+            expected_utility[a] = 0
+
+            for (p, s1) in transition_model_partial[state][a]:
+                # agent_pos = s1[0]
+                # pred_position = s1[1]
+                model_input = [0] * 51
+
+                # Update post prey moves
+                updated_prey_prob_vector = np.matmul(self.prey_transition_matrix, np.array(probability_vector))
+                updated_prey_prob_vector = updated_prey_prob_vector.tolist()
+
+                for i in range(50):
+                    model_input[i] = (graph.shortest_path_length(s1[0], i) * updated_prey_prob_vector[i] - mean_x[i]) / stdev_x[i]
+
+                model_input[50] = (graph.shortest_path_length(s1[0], s1[1]) * updated_prey_prob_vector[i] - mean_x[i]) / stdev_x[i]
+
+                expected_utility[a] += p * net.predict([[model_input]])[0][0][0]
+    
+
+        # Set Minimum reward value out of all the actions as the utility of the current state
+        min_val = min(expected_utility.values())
+
+        # # UPDATE utility
+        # state_utility[state] = immediate_reward[state] +   min_val
+
+
+        lowest_utility_neighbors = [action for action, utility in expected_utility.items() if utility == min_val]      
+
+        # Breaking ties at random
+        next_pos = random.choice(lowest_utility_neighbors)
+
+        return next_pos
 
 
         
@@ -517,7 +575,7 @@ class Agent:
         self.node = state_policy[state] 
 
 
-    def move_partial(self, graph: Graph, prey_pos: int, pred_pos: int, time_steps: int, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility) -> bool:
+    def move_partial(self, graph: Graph, prey_pos: int, pred_pos: int, time_steps: int, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility, net=None, mean_x=None, stdev_x=None) -> bool:
         """
         Movement logic for Agent U_partial
         """
@@ -559,7 +617,24 @@ class Agent:
             raise ValueError("Sum of beliefs error (after node survey)")
 
         probability_vector = self.prey_beliefs.copy()
-        next_pos = self.get_policy(graph, pred_pos, probability_vector, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility)
+
+        if self.name == "agent12":
+            next_pos = self.get_policy(graph, pred_pos, probability_vector, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility)
+
+        elif self.name == "agent14":
+
+            state = (self.node, pred_pos)
+            # mod_input = [0] * 51
+
+            # for i in range(50):
+            #     mod_input[i] = probability_vector[i] * graph.shortest_path_length(self.node, i)
+            
+            # mod_input[50] = graph.shortest_path_length(self.node, pred_pos)
+
+            next_pos = self.get_policy_partial(graph, state, transition_model_partial, probability_vector, net, mean_x, stdev_x)
+
+        elif self.name == "agent15":
+            next_pos = self.get_policy(graph, pred_pos, probability_vector, transition_model_partial, optimal_state_utility, immediate_reward, partial_utility, net, mean_x, stdev_x)
 
         # state_policy[s] = next_pos
         self.node = next_pos
@@ -586,13 +661,13 @@ class Agent:
             return False
         
         
-    def move_model(self, graph: Graph, prey_pos: int, pred_pos: int,  transition_model, predict) -> bool:
+    def move_model(self, graph: Graph, prey_pos: int, pred_pos: int, transition_model, net, mean_x, stdev_x) -> bool:
         """
         Movement logic for Agent V_MODEL
         """
 
-        state = (self.node,prey_pos,pred_pos) 
-        self.node = self.get_policy_model( graph, state, transition_model, predict)  
+        state = (self.node,prey_pos,pred_pos)
+        self.node = self.get_policy_model( graph, state, transition_model, net, mean_x, stdev_x) 
             
 
 
